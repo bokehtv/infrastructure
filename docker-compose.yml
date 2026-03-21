@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3000"
+    environment:
+      - NODE_ENV=development
+    networks:
+      - bokehtv-net
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - TMDB_API_KEY=${TMDB_API_KEY}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-local_access_secret}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-local_refresh_secret}
+    networks:
+      - bokehtv-net
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - bokehtv-net
+
+networks:
+  bokehtv-net:
+    driver: bridge
+
+volumes:
+  redis-data:

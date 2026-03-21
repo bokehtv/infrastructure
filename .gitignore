@@ -1,0 +1,4 @@
+# Prevent secrets from leaking into the infrastructure repo
+.env
+.env.*
+!.env.example
