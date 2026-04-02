@@ -1,0 +1,32 @@
+{
+  "title": "BokehTV Core Metrics",
+  "tags": ["nodejs", "express"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "title": "Request Volumes",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [{ "expr": "sum(rate(http_request_duration_seconds_count[1m])) by (method, status)", "legendFormat": "{{method}} - {{status}}" }]
+    },
+    {
+      "title": "Error Rates (5xx)",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [{ "expr": "sum(rate(http_request_duration_seconds_count{status=~\"5..\"}[1m]))", "legendFormat": "Errors/sec" }]
+    },
+    {
+      "title": "Average Request Latency",
+      "type": "gauge",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [{ "expr": "sum(rate(http_request_duration_seconds_sum[1m])) / sum(rate(http_request_duration_seconds_count[1m]))", "legendFormat": "Latency" }]
+    },
+    {
+      "title": "Node.js Heap Memory",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [{ "expr": "nodejs_heap_space_size_used_bytes", "legendFormat": "Heap Used" }]
+    }
+  ],
+  "schemaVersion": 30
+}
