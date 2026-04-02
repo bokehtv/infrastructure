@@ -6,4 +6,4 @@ scrape_configs:
   - job_name: 'bokehtv-backend'
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['backend:3000']
+      - targets: ['host.docker.internal:4000']
