@@ -3,7 +3,13 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: 'bokehtv-backend'
+  - job_name: 'bokehtv-backend-local'
     metrics_path: '/metrics'
     static_configs:
       - targets: ['host.docker.internal:4000']
+
+  - job_name: 'bokehtv-backend-production'
+    metrics_path: '/metrics'
+    scheme: https
+    static_configs:
+      - targets: ['api.bokehtv.app'] # CHANGE THIS to your production domain!
