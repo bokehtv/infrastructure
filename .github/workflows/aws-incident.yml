@@ -1,8 +1,9 @@
+
 name: AWS DevOps Incident Trigger
 
 on:
   issues:
-    types: [opened, labeled]
+    types: [opened]
 
 permissions: {}
 
@@ -10,12 +11,7 @@ jobs:
   trigger:
     if: >-
       !github.event.issue.pull_request &&
-      (
-        (github.event.action == 'opened' &&
-         contains(github.event.issue.labels.*.name, 'incident')) ||
-        (github.event.action == 'labeled' &&
-         github.event.label.name == 'incident')
-      )
+      contains(github.event.issue.labels.*.name, 'incident')
 
     runs-on: ubuntu-latest
 
