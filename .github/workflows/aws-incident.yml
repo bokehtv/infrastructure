@@ -1,0 +1,62 @@
+name: AWS DevOps Incident Trigger
+
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions: {}
+
+jobs:
+  trigger:
+    if: >-
+      !github.event.issue.pull_request &&
+      (
+        (github.event.action == 'opened' &&
+         contains(github.event.issue.labels.*.name, 'incident')) ||
+        (github.event.action == 'labeled' &&
+         github.event.label.name == 'incident')
+      )
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger AWS DevOps Agent
+        env:
+          WEBHOOK_URL: ${{ secrets.AWS_DEVOPS_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.AWS_DEVOPS_WEBHOOK_SECRET }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+
+          PAYLOAD=$(jq -n \
+            --arg id "${REPO}#${ISSUE_NUMBER}" \
+            --arg title "[Incident] ${ISSUE_TITLE}" \
+            --arg description "GitHub Issue: ${ISSUE_URL}\nRepository: ${REPO}\n\n${ISSUE_BODY}\n\nInvestigate the issue using connected GitHub and AWS resources. Identify root cause and supporting evidence. Do not modify resources." \
+            --arg timestamp "$TIMESTAMP" \
+            --arg service "$REPO" \
+            '{
+              eventType: "incident",
+              incidentId: $id,
+              action: "created",
+              priority: "MEDIUM",
+              title: $title,
+              description: $description,
+              timestamp: $timestamp,
+              service: $service
+            }')
+
+          SIGNATURE=$(printf '%s' "${TIMESTAMP}:${PAYLOAD}" |
+            openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" -binary |
+            base64 -w 0)
+
+          curl --fail --silent --show-error \
+            -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "x-amzn-event-timestamp: $TIMESTAMP" \
+            -H "x-amzn-event-signature: $SIGNATURE" \
+            --data-binary "$PAYLOAD"
