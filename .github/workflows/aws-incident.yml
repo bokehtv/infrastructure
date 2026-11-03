@@ -1,58 +1,145 @@
 
-name: AWS DevOps Incident Trigger
+name: Trigger AWS DevOps Agent
 
 on:
   issues:
-    types: [opened]
+    types: [labeled]
 
-permissions: {}
+permissions:
+  id-token: write
+  contents: read
+  issues: read
 
 jobs:
-  trigger:
-    if: >-
-      !github.event.issue.pull_request &&
-      contains(github.event.issue.labels.*.name, 'incident')
-
+  trigger-agent:
+    if: github.event.label.name == 'incident'
     runs-on: ubuntu-latest
 
     steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: eu-north-1
+
+      - name: Prepare incident and save mapping
+        env:
+          REPOSITORY: ${{ github.repository }}
+          EVENT_PATH: ${{ github.event_path }}
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const crypto = require("crypto");
+
+          const event = JSON.parse(
+            fs.readFileSync(process.env.EVENT_PATH, "utf8")
+          );
+
+          const issue = event.issue;
+          const [owner, repo] = process.env.REPOSITORY.split("/");
+
+          const correlationId = crypto
+            .createHash("sha256")
+            .update(`${process.env.REPOSITORY}#${issue.number}`)
+            .digest("hex");
+
+          const timestamp = new Date().toISOString();
+
+          const description = [
+            `GitHub repository: ${process.env.REPOSITORY}`,
+            `GitHub issue: #${issue.number}`,
+            `GitHub issue URL: ${issue.html_url}`,
+            `GITHUB_CORRELATION_ID=${correlationId}`,
+            "",
+            "Issue description:",
+            issue.body || "No description provided"
+          ].join("\n");
+
+          const payload = {
+            eventType: "incident",
+            incidentId: `github-${correlationId}`,
+            action: "created",
+            priority: "HIGH",
+            title: issue.title,
+            description,
+            timestamp,
+            service: `GitHub/${process.env.REPOSITORY}`
+          };
+
+          const item = {
+            correlation_id: { S: correlationId },
+            owner: { S: owner },
+            repo: { S: repo },
+            issue_number: { N: String(issue.number) },
+            issue_url: { S: issue.html_url },
+            issue_title: { S: issue.title },
+            created_at: { S: timestamp }
+          };
+
+          fs.writeFileSync(
+            "/tmp/payload.json",
+            JSON.stringify(payload)
+          );
+
+          fs.writeFileSync(
+            "/tmp/item.json",
+            JSON.stringify(item)
+          );
+
+          console.log("Prepared incident:", issue.html_url);
+          console.log("Correlation ID:", correlationId);
+          NODE
+
+      - name: Save issue mapping in DynamoDB
+        run: |
+          aws dynamodb put-item \
+            --table-name devops-agent-github-mapping \
+            --item file:///tmp/item.json
+
       - name: Trigger AWS DevOps Agent
         env:
-          WEBHOOK_URL: ${{ secrets.AWS_DEVOPS_WEBHOOK_URL }}
-          WEBHOOK_SECRET: ${{ secrets.AWS_DEVOPS_WEBHOOK_SECRET }}
-          REPO: ${{ github.repository }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
-          ISSUE_TITLE: ${{ github.event.issue.title }}
-          ISSUE_URL: ${{ github.event.issue.html_url }}
-          ISSUE_BODY: ${{ github.event.issue.body }}
-
+          WEBHOOK_URL: ${{ secrets.DEVOPS_AGENT_WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.DEVOPS_AGENT_WEBHOOK_SECRET }}
         run: |
-          TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+          node <<'NODE'
+          const fs = require("fs");
+          const crypto = require("crypto");
 
-          PAYLOAD=$(jq -n \
-            --arg id "${REPO}#${ISSUE_NUMBER}" \
-            --arg title "[Incident] ${ISSUE_TITLE}" \
-            --arg description "GitHub Issue: ${ISSUE_URL}\nRepository: ${REPO}\n\n${ISSUE_BODY}\n\nInvestigate the issue using connected GitHub and AWS resources. Identify root cause and supporting evidence. Do not modify resources." \
-            --arg timestamp "$TIMESTAMP" \
-            --arg service "$REPO" \
-            '{
-              eventType: "incident",
-              incidentId: $id,
-              action: "created",
-              priority: "MEDIUM",
-              title: $title,
-              description: $description,
-              timestamp: $timestamp,
-              service: $service
-            }')
+          async function main() {
+            const payload = fs.readFileSync(
+              "/tmp/payload.json",
+              "utf8"
+            );
 
-          SIGNATURE=$(printf '%s' "${TIMESTAMP}:${PAYLOAD}" |
-            openssl dgst -sha256 -hmac "$WEBHOOK_SECRET" -binary |
-            base64 -w 0)
+            const timestamp = JSON.parse(payload).timestamp;
 
-          curl --fail --silent --show-error \
-            -X POST "$WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -H "x-amzn-event-timestamp: $TIMESTAMP" \
-            -H "x-amzn-event-signature: $SIGNATURE" \
-            --data-binary "$PAYLOAD"
+            const signature = crypto
+              .createHmac("sha256", process.env.WEBHOOK_SECRET)
+              .update(`${timestamp}:${payload}`, "utf8")
+              .digest("base64");
+
+            const response = await fetch(process.env.WEBHOOK_URL, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-amzn-event-timestamp": timestamp,
+                "x-amzn-event-signature": signature
+              },
+              body: payload
+            });
+
+            const result = await response.text();
+
+            console.log("HTTP status:", response.status);
+            console.log("Response:", result);
+
+            if (!response.ok) {
+              throw new Error("Agent webhook request failed");
+            }
+          }
+
+          main().catch(error => {
+            console.error(error);
+            process.exit(1);
+          });
+          NODE
